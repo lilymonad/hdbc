@@ -1,4 +1,4 @@
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{builder::TypedValueParser, error::ErrorKind, Parser, ValueEnum};
 
 #[derive(ValueEnum, Clone, Copy, Debug)]
 #[repr(u64)]
@@ -70,6 +70,34 @@ fn display_simplified(value: u64, repr: Representation, format: Format) {
     println!();
 }
 
+#[derive(Clone)]
+struct MultiReprU64Parser;
+
+impl TypedValueParser for MultiReprU64Parser {
+    type Value = u64;
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        raw_value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let value = raw_value
+            .to_str()
+            .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
+
+        let value = if value.starts_with("0b") {
+            u64::from_str_radix(&value[2..], 2)
+        } else if value.starts_with("0x") {
+            u64::from_str_radix(&value[2..], 16)
+        } else {
+            u64::from_str_radix(&value, 10)
+        }
+        .map_err(|_| clap::Error::new(ErrorKind::InvalidValue).with_cmd(cmd))?;
+
+        Ok(value)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct AppConfig {
@@ -99,25 +127,17 @@ struct AppConfig {
     )]
     simplified: bool,
 
-    num: String,
+    #[arg(value_parser=MultiReprU64Parser)]
+    value: u64,
 }
 
 fn main() {
     let cfg = AppConfig::parse();
-
-    let value = if cfg.num.starts_with("0b") {
-        u64::from_str_radix(&cfg.num[2..], 2).expect("binary value")
-    } else if cfg.num.starts_with("0x") {
-        u64::from_str_radix(&cfg.num[2..], 16).expect("hex value")
-    } else {
-        u64::from_str_radix(&cfg.num, 10).expect("decimal value")
-    };
-
     for repr in cfg.representation {
         if cfg.simplified {
-            display_simplified(value, repr, cfg.format);
+            display_simplified(cfg.value, repr, cfg.format);
         } else {
-            display_detailed(value, repr, cfg.format);
+            display_detailed(cfg.value, repr, cfg.format);
         }
     }
 }
