@@ -1,6 +1,7 @@
 use clap::{builder::TypedValueParser, error::ErrorKind, Parser, ValueEnum};
+use std::{collections::HashSet, hash::Hash, marker::PhantomData};
 
-#[derive(ValueEnum, Clone, Copy, Debug)]
+#[derive(ValueEnum, Clone, Copy, Hash, PartialEq, Eq, Debug)]
 #[repr(u64)]
 enum Representation {
     B,
@@ -98,6 +99,44 @@ impl TypedValueParser for MultiReprU64Parser {
     }
 }
 
+#[derive(Clone, Default)]
+struct EnumSetParser<T> {
+    sep_char: char,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> EnumSetParser<T> {
+    pub fn new(sep_char: char) -> Self {
+        Self {
+            sep_char,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T: ValueEnum + Hash + Eq + Send + Sync + 'static> TypedValueParser for EnumSetParser<T> {
+    type Value = HashSet<T>;
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        raw_value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let value = raw_value
+            .to_str()
+            .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
+
+        let mut set = HashSet::new();
+        for arg in value.split(|c| c == self.sep_char) {
+            let arg_enum = <T as ValueEnum>::from_str(arg, true)
+                .map_err(|_| clap::Error::new(ErrorKind::Io).with_cmd(cmd))?;
+            set.insert(arg_enum);
+        }
+
+        Ok(set)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct AppConfig {
@@ -112,13 +151,12 @@ struct AppConfig {
     #[arg(
         short,
         long = "repr",
-        value_delimiter = ',',
-        value_enum,
+        value_parser = EnumSetParser::<Representation>::new(','),
         help = "Representations to be printed",
         long_help = "Possible values are h for hex, d for decimal, b for binary. Put multiple between commas to print multiple representations.",
         default_value = "h,d,b"
     )]
-    representation: Vec<Representation>,
+    representation: HashSet<Representation>,
 
     #[arg(
         short,
@@ -127,7 +165,7 @@ struct AppConfig {
     )]
     simplified: bool,
 
-    #[arg(value_parser=MultiReprU64Parser)]
+    #[arg(value_parser=MultiReprU64Parser, help = "The number to convert (prefixed with 0x if hexadecimal, or 0b of binary)")]
     value: u64,
 }
 
